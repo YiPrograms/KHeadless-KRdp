@@ -10,7 +10,9 @@
 #include "RdpConnection.h"
 
 #include <filesystem>
+#include <netdb.h>
 #include <optional>
+#include <sys/socket.h>
 
 #include <fcntl.h>
 
@@ -81,6 +83,21 @@ bool createSamFile(QTemporaryFile &file, const QList<User> &users)
     file.close();
 
     return true;
+}
+
+QString peerAddress(int socket)
+{
+    sockaddr_storage address{};
+    socklen_t addressLength = sizeof(address);
+    if (getpeername(socket, reinterpret_cast<sockaddr *>(&address), &addressLength) != 0) {
+        return {};
+    }
+
+    char host[NI_MAXHOST]{};
+    if (getnameinfo(reinterpret_cast<const sockaddr *>(&address), addressLength, host, sizeof(host), nullptr, 0, NI_NUMERICHOST) != 0) {
+        return {};
+    }
+    return QString::fromLatin1(host);
 }
 
 /**
@@ -471,6 +488,17 @@ bool RdpConnection::onActivate()
 bool RdpConnection::onPostConnect()
 {
     qCInfo(KRDP) << "New client connected:" << d->peer->hostname << freerdp_peer_os_major_type_string(d->peer) << freerdp_peer_os_minor_type_string(d->peer);
+
+    const auto &identity = d->peer->identity;
+    const auto username = identity.User && identity.UserLength > 0
+        ? QString::fromUtf16(reinterpret_cast<const char16_t *>(identity.User), identity.UserLength)
+        : QString();
+    const auto users = d->server->users();
+    const auto user = std::find_if(users.cbegin(), users.cend(), [&username](const User &candidate) {
+        return candidate.name.compare(username, Qt::CaseInsensitive) == 0;
+    });
+    const bool readOnly = user != users.cend() && user->readOnly;
+    Q_EMIT authenticated(username, peerAddress(d->peer->sockfd), readOnly);
 
     // Cleanup the temporary file so we don't leak it.
     d->samFile.remove();

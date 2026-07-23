@@ -76,6 +76,11 @@ public:
     Q_SIGNAL void stateChanged(State newState);
 
     /**
+     * Emitted after NLA authentication has completed successfully.
+     */
+    Q_SIGNAL void authenticated(const QString &username, const QString &peerAddress, bool readOnly);
+
+    /**
      * Close the connection
      *
      * \param reason The reason to close the connection. May set error state if
