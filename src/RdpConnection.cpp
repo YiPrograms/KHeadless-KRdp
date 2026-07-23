@@ -29,6 +29,7 @@
 #include <freerdp/channels/drdynvc.h>
 
 #include "Clipboard.h"
+#include "AudioStream.h"
 #include "Cursor.h"
 #include "DisplayControl.h"
 #include "InputHandler.h"
@@ -163,6 +164,7 @@ public:
     std::unique_ptr<Cursor> cursor;
     std::unique_ptr<NetworkDetection> networkDetection;
     std::unique_ptr<Clipboard> clipboard;
+    std::unique_ptr<AudioStream> audioStream;
     std::unique_ptr<DisplayControl> displayControl;
 
     freerdp_peer *peer = nullptr;
@@ -190,6 +192,7 @@ RdpConnection::RdpConnection(Server *server, qintptr socketHandle)
     d->cursor = std::make_unique<Cursor>(this);
     d->networkDetection = std::make_unique<NetworkDetection>(this);
     d->clipboard = std::make_unique<Clipboard>(this);
+    d->audioStream = std::make_unique<AudioStream>(this);
     d->displayControl = std::make_unique<DisplayControl>(this);
 
     QMetaObject::invokeMethod(this, &RdpConnection::initialize, Qt::QueuedConnection);
@@ -257,6 +260,11 @@ Cursor *RdpConnection::cursor() const
 Clipboard *RdpConnection::clipboard() const
 {
     return d->clipboard.get();
+}
+
+AudioStream *RdpConnection::audioStream() const
+{
+    return d->audioStream.get();
 }
 
 DisplayControl *RdpConnection::displayControl() const
@@ -499,6 +507,9 @@ bool RdpConnection::onPostConnect()
     });
     const bool readOnly = user != users.cend() && user->readOnly;
     Q_EMIT authenticated(username, peerAddress(d->peer->sockfd), readOnly);
+    if (!d->audioStream->initialize()) {
+        qCWarning(KRDP) << "Playback audio is unavailable for this connection";
+    }
 
     // Cleanup the temporary file so we don't leak it.
     d->samFile.remove();
@@ -509,6 +520,7 @@ bool RdpConnection::onPostConnect()
 bool RdpConnection::onClose()
 {
     d->displayControl->close();
+    d->audioStream->close();
     d->clipboard->close();
     d->videoStream->close();
     setState(State::Closed);

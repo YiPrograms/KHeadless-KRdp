@@ -19,6 +19,8 @@ endif()
 
 target_sources(KRdp PRIVATE
     AbstractSession.cpp
+    AudioStream.cpp
+    AudioStream.h
     Clipboard.cpp
     Clipboard.h
     DisplayControl.cpp
@@ -108,6 +110,7 @@ install(EXPORT KRdpTargets
 
 install(FILES
     AbstractSession.h
+    AudioStream.h
     Clipboard.h
     Cursor.h
     DisplayControl.h

@@ -23,6 +23,7 @@ class VideoStream;
 class Cursor;
 class NetworkDetection;
 class Clipboard;
+class AudioStream;
 
 /**
  * An RDP session.
@@ -102,6 +103,7 @@ public:
     Cursor *cursor() const;
 
     Clipboard *clipboard() const;
+    AudioStream *audioStream() const;
 
     DisplayControl *displayControl() const;
 
@@ -123,6 +125,7 @@ private:
     friend class NetworkDetection;
     friend class Clipboard;
     friend class DisplayControl;
+    friend class AudioStream;
 
     void setState(State newState);
     void initialize();
