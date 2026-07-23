@@ -28,8 +28,8 @@
 
 #include <freerdp/channels/drdynvc.h>
 
-#include "Clipboard.h"
 #include "AudioStream.h"
+#include "Clipboard.h"
 #include "Cursor.h"
 #include "DisplayControl.h"
 #include "InputHandler.h"
@@ -340,8 +340,7 @@ void RdpConnection::initialize()
     // PSEUDO_XSERVER is apparently required for things to work properly.
     freerdp_settings_set_uint32(settings, FreeRDP_OsMinorType, OSMINORTYPE_PSEUDO_XSERVER);
 
-    // TODO: Implement audio support
-    freerdp_settings_set_bool(settings, FreeRDP_AudioPlayback, false);
+    freerdp_settings_set_bool(settings, FreeRDP_AudioPlayback, true);
 
     freerdp_settings_set_uint32(settings, FreeRDP_ColorDepth, 32);
 
@@ -353,7 +352,6 @@ void RdpConnection::initialize()
     freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444, false);
     freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444v2, false);
     freerdp_settings_set_bool(settings, FreeRDP_GfxH264, true);
-
 
     freerdp_settings_set_bool(settings, FreeRDP_GfxSmallCache, false);
     freerdp_settings_set_bool(settings, FreeRDP_GfxThinClient, false);
@@ -480,7 +478,7 @@ bool RdpConnection::onCapabilities()
         return false;
     }
 
-    if (freerdp_settings_get_uint32(settings,FreeRDP_PointerCacheSize) <= 0) {
+    if (freerdp_settings_get_uint32(settings, FreeRDP_PointerCacheSize) <= 0) {
         qCWarning(KRDP) << "Client doesn't support pointer caching, aborting";
         return false;
     }
@@ -498,9 +496,8 @@ bool RdpConnection::onPostConnect()
     qCInfo(KRDP) << "New client connected:" << d->peer->hostname << freerdp_peer_os_major_type_string(d->peer) << freerdp_peer_os_minor_type_string(d->peer);
 
     const auto &identity = d->peer->identity;
-    const auto username = identity.User && identity.UserLength > 0
-        ? QString::fromUtf16(reinterpret_cast<const char16_t *>(identity.User), identity.UserLength)
-        : QString();
+    const auto username =
+        identity.User && identity.UserLength > 0 ? QString::fromUtf16(reinterpret_cast<const char16_t *>(identity.User), identity.UserLength) : QString();
     const auto users = d->server->users();
     const auto user = std::find_if(users.cbegin(), users.cend(), [&username](const User &candidate) {
         return candidate.name.compare(username, Qt::CaseInsensitive) == 0;

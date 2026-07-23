@@ -21,11 +21,6 @@ class KRDP_EXPORT Clipboard : public QObject
     Q_OBJECT
 
 public:
-    /**
-     * TODO: This clipboard is currently not implemented. It only
-     * works as a dummy clipboard that does nothing to avoid crashes if
-     * cliprdr channel is opened.
-     */
     explicit Clipboard(RdpConnection *session);
     ~Clipboard() override;
 
@@ -35,11 +30,21 @@ public:
     void setEnabled(bool enabled);
     bool enabled() const;
 
+    /**
+     * Advertise host clipboard text to the RDP client.
+     */
+    void setServerText(const QString &text);
+
+Q_SIGNALS:
+    /**
+     * Emitted when the RDP client publishes new clipboard text.
+     */
+    void clientTextChanged(const QString &text);
+
 private:
+    void sendServerData();
+
     class Private;
     const std::unique_ptr<Private> d;
-
-    bool m_initialized = false;
-    bool m_enabled = false;
 };
 }
