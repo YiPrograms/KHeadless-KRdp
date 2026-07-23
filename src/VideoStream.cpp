@@ -94,7 +94,7 @@ uint32_t gfxQoEFrameAcknowledge(RdpgfxServerContext *, const RDPGFX_QOE_FRAME_AC
 }
 
 struct Surface {
-    uint16_t id;
+    uint16_t id = 0;
     QSize size;
 };
 
@@ -118,14 +118,16 @@ public:
     uint16_t nextSurfaceId = 1;
     Surface surface;
 
-    bool pendingReset = true;
+    std::atomic_bool pendingReset = true;
     bool enabled = false;
     bool capsConfirmed = false;
 
     std::jthread frameSubmissionThread;
     std::mutex frameQueueMutex;
+    mutable std::mutex monitorLayoutMutex;
 
     QQueue<VideoFrame> frameQueue;
+    DisplayMonitorList monitorLayout;
     QSet<uint32_t> pendingFrames;
 
     int maximumFrameRate = 120;
@@ -225,9 +227,34 @@ void VideoStream::queueFrame(const KRdp::VideoFrame &frame)
     d->frameQueue.append(frame);
 }
 
+void VideoStream::setMonitorLayout(const DisplayMonitorList &monitors)
+{
+    {
+        std::lock_guard lock(d->monitorLayoutMutex);
+        if (d->monitorLayout == monitors) {
+            return;
+        }
+        d->monitorLayout = monitors;
+    }
+    {
+        // Frames encoded against the old KWin topology must not be submitted
+        // after ResetGraphics publishes the new topology.
+        std::lock_guard lock(d->frameQueueMutex);
+        d->frameQueue.clear();
+    }
+    reset();
+    Q_EMIT monitorLayoutChanged();
+}
+
+DisplayMonitorList VideoStream::monitorLayout() const
+{
+    std::lock_guard lock(d->monitorLayoutMutex);
+    return d->monitorLayout;
+}
+
 void VideoStream::reset()
 {
-    d->pendingReset = true;
+    d->pendingReset.store(true);
 }
 
 bool VideoStream::enabled() const
@@ -348,40 +375,85 @@ uint32_t VideoStream::onFrameAcknowledge(const RDPGFX_FRAME_ACKNOWLEDGE_PDU *fra
     return CHANNEL_RC_OK;
 }
 
-void VideoStream::performReset(QSize size)
+bool VideoStream::performReset(QSize size)
 {
-    RDPGFX_RESET_GRAPHICS_PDU resetGraphicsPdu;
+    auto layout = monitorLayout();
+    if (layout.isEmpty()) {
+        layout.append({
+            .position = QPoint(0, 0),
+            .size = size,
+            .primary = true,
+        });
+    }
+
+    QRect desktopGeometry;
+    for (const auto &monitor : std::as_const(layout)) {
+        desktopGeometry = desktopGeometry.united(QRect(monitor.position, monitor.size));
+    }
+    if (desktopGeometry.size() != size) {
+        // Display Control is applied to KWin asynchronously. Keep the reset
+        // pending until PipeWire starts producing frames for the new layout.
+        return false;
+    }
+
+    if (d->surface.id != 0) {
+        RDPGFX_DELETE_SURFACE_PDU deleteSurfacePdu{};
+        deleteSurfacePdu.surfaceId = d->surface.id;
+        d->gfxContext->DeleteSurface(d->gfxContext.get(), &deleteSurfacePdu);
+        d->surface = {};
+    }
+
+    std::vector<MONITOR_DEF> monitorDefinitions;
+    monitorDefinitions.reserve(layout.size());
+    for (const auto &monitor : std::as_const(layout)) {
+        monitorDefinitions.push_back({
+            .left = monitor.position.x(),
+            .top = monitor.position.y(),
+            .right = monitor.position.x() + monitor.size.width() - 1,
+            .bottom = monitor.position.y() + monitor.size.height() - 1,
+            .flags = monitor.primary ? MONITOR_PRIMARY : 0U,
+        });
+    }
+
+    RDPGFX_RESET_GRAPHICS_PDU resetGraphicsPdu{};
     resetGraphicsPdu.width = size.width();
     resetGraphicsPdu.height = size.height();
-    resetGraphicsPdu.monitorCount = 1;
+    resetGraphicsPdu.monitorCount = monitorDefinitions.size();
+    resetGraphicsPdu.monitorDefArray = monitorDefinitions.data();
+    auto status = d->gfxContext->ResetGraphics(d->gfxContext.get(), &resetGraphicsPdu);
+    if (status != CHANNEL_RC_OK) {
+        qCWarning(KRDP) << "ResetGraphics failed" << status;
+        return false;
+    }
 
-    auto monitors = new MONITOR_DEF[1];
-    monitors[0].left = 0;
-    monitors[0].right = size.width();
-    monitors[0].top = 0;
-    monitors[0].bottom = size.height();
-    monitors[0].flags = MONITOR_PRIMARY;
-    resetGraphicsPdu.monitorDefArray = monitors;
-    d->gfxContext->ResetGraphics(d->gfxContext.get(), &resetGraphicsPdu);
-
-    RDPGFX_CREATE_SURFACE_PDU createSurfacePdu;
+    RDPGFX_CREATE_SURFACE_PDU createSurfacePdu{};
     createSurfacePdu.width = size.width();
     createSurfacePdu.height = size.height();
     uint16_t surfaceId = d->nextSurfaceId++;
     createSurfacePdu.surfaceId = surfaceId;
     createSurfacePdu.pixelFormat = GFX_PIXEL_FORMAT_XRGB_8888;
-    d->gfxContext->CreateSurface(d->gfxContext.get(), &createSurfacePdu);
+    status = d->gfxContext->CreateSurface(d->gfxContext.get(), &createSurfacePdu);
+    if (status != CHANNEL_RC_OK) {
+        qCWarning(KRDP) << "CreateSurface failed" << status;
+        return false;
+    }
 
     d->surface = Surface{
         .id = surfaceId,
         .size = size,
     };
 
-    RDPGFX_MAP_SURFACE_TO_OUTPUT_PDU mapSurfaceToOutputPdu;
+    RDPGFX_MAP_SURFACE_TO_OUTPUT_PDU mapSurfaceToOutputPdu{};
     mapSurfaceToOutputPdu.outputOriginX = 0;
     mapSurfaceToOutputPdu.outputOriginY = 0;
     mapSurfaceToOutputPdu.surfaceId = surfaceId;
-    d->gfxContext->MapSurfaceToOutput(d->gfxContext.get(), &mapSurfaceToOutputPdu);
+    status = d->gfxContext->MapSurfaceToOutput(d->gfxContext.get(), &mapSurfaceToOutputPdu);
+    if (status != CHANNEL_RC_OK) {
+        qCWarning(KRDP) << "MapSurfaceToOutput failed" << status;
+        return false;
+    }
+
+    return true;
 }
 
 void VideoStream::sendFrame(const VideoFrame &frame)
@@ -394,9 +466,11 @@ void VideoStream::sendFrame(const VideoFrame &frame)
         return;
     }
 
-    if (d->pendingReset) {
-        d->pendingReset = false;
-        performReset(frame.size);
+    if (d->pendingReset.load()) {
+        if (!performReset(frame.size)) {
+            return;
+        }
+        d->pendingReset.store(false);
     }
 
     d->session->networkDetection()->startBandwidthMeasure();

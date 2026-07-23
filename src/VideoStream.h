@@ -15,6 +15,7 @@
 
 #include <freerdp/server/rdpgfx.h>
 
+#include "DisplayControl.h"
 #include "krdp_export.h"
 
 namespace KRdp
@@ -87,6 +88,16 @@ public:
     void queueFrame(const VideoFrame &frame);
 
     /**
+     * Set the monitor topology represented by the captured workspace.
+     *
+     * The next frame whose size matches the combined desktop extent restarts
+     * the graphics pipeline and publishes this topology to the client.
+     */
+    void setMonitorLayout(const DisplayMonitorList &monitors);
+    DisplayMonitorList monitorLayout() const;
+    Q_SIGNAL void monitorLayoutChanged();
+
+    /**
      * Indicate that the video state should be reset.
      *
      * This means the screen resolution and other information of the client
@@ -112,7 +123,7 @@ private:
     uint32_t onCapsAdvertise(const RDPGFX_CAPS_ADVERTISE_PDU *capsAdvertise);
     uint32_t onFrameAcknowledge(const RDPGFX_FRAME_ACKNOWLEDGE_PDU *frameAcknowledge);
 
-    void performReset(QSize size);
+    bool performReset(QSize size);
     void sendFrame(const VideoFrame &frame);
 
     void updateRequestedFrameRate();
