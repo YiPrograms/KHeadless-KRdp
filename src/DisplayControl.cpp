@@ -11,9 +11,11 @@
 #include <QRect>
 
 #include <freerdp/peer.h>
+#include <freerdp/settings.h>
 
 #include "PeerContext_p.h"
 #include "RdpConnection.h"
+#include "VideoStream.h"
 #include "krdp_logging.h"
 
 namespace KRdp
@@ -21,24 +23,6 @@ namespace KRdp
 
 namespace
 {
-
-UINT receiveMonitorLayout(DispServerContext *context, const DISPLAY_CONTROL_MONITOR_LAYOUT_PDU *pdu)
-{
-    auto control = static_cast<DisplayControl *>(context->custom);
-    if (!control || !pdu) {
-        return CHANNEL_RC_NULL_DATA;
-    }
-
-    DisplayMonitorList monitors;
-    QString error;
-    if (!DisplayControl::decodeMonitorLayout(*pdu, &monitors, &error)) {
-        qCWarning(KRDP) << "Rejected RDP display layout:" << error;
-        return CHANNEL_RC_BAD_CHANNEL;
-    }
-
-    Q_EMIT control->requestedMonitorLayoutChanged(monitors);
-    return CHANNEL_RC_OK;
-}
 
 bool fail(QString *error, const QString &message)
 {
@@ -67,6 +51,24 @@ bool adjacent(const DisplayMonitor &first, const DisplayMonitor &second)
 
 }
 
+UINT DisplayControl::receiveMonitorLayout(DispServerContext *context, const DISPLAY_CONTROL_MONITOR_LAYOUT_PDU *pdu)
+{
+    auto control = static_cast<DisplayControl *>(context->custom);
+    if (!control || !pdu) {
+        return CHANNEL_RC_NULL_DATA;
+    }
+
+    DisplayMonitorList monitors;
+    QString error;
+    if (!decodeMonitorLayout(*pdu, &monitors, &error)) {
+        qCWarning(KRDP) << "Rejected RDP display layout:" << error;
+        return CHANNEL_RC_BAD_CHANNEL;
+    }
+
+    control->requestMonitorLayout(monitors);
+    return CHANNEL_RC_OK;
+}
+
 DisplayControl::DisplayControl(RdpConnection *connection)
     : m_connection(connection)
 {
@@ -92,7 +94,7 @@ bool DisplayControl::initialize()
 
     m_context->rdpcontext = m_connection->rdpPeer()->context;
     m_context->custom = this;
-    m_context->DispMonitorLayout = receiveMonitorLayout;
+    m_context->DispMonitorLayout = &DisplayControl::receiveMonitorLayout;
     m_context->MaxNumMonitors = MaximumMonitorCount;
     m_context->MaxMonitorAreaFactorA = 8192;
     m_context->MaxMonitorAreaFactorB = 8192;
@@ -108,6 +110,7 @@ bool DisplayControl::initialize()
         return false;
     }
 
+    requestInitialMonitorLayout();
     return true;
 }
 
@@ -119,6 +122,97 @@ void DisplayControl::close()
 
     disp_server_context_free(m_context);
     m_context = nullptr;
+}
+
+bool DisplayControl::acceptRequestedMonitorLayout(const DisplayMonitorList &monitors, QString *error)
+{
+    {
+        std::lock_guard lock(m_requestedMonitorLayoutMutex);
+        if (!m_requestedMonitorLayout) {
+            return fail(error, QStringLiteral("There is no pending client monitor layout"));
+        }
+        if (*m_requestedMonitorLayout != monitors) {
+            return fail(error, QStringLiteral("The accepted layout does not match the pending client request"));
+        }
+        m_requestedMonitorLayout.reset();
+    }
+
+    m_connection->videoStream()->setMonitorLayout(monitors);
+    return true;
+}
+
+void DisplayControl::rejectRequestedMonitorLayout()
+{
+    std::lock_guard lock(m_requestedMonitorLayoutMutex);
+    m_requestedMonitorLayout.reset();
+}
+
+std::optional<DisplayMonitorList> DisplayControl::requestedMonitorLayout() const
+{
+    std::lock_guard lock(m_requestedMonitorLayoutMutex);
+    return m_requestedMonitorLayout;
+}
+
+void DisplayControl::requestMonitorLayout(const DisplayMonitorList &monitors)
+{
+    {
+        std::lock_guard lock(m_requestedMonitorLayoutMutex);
+        m_requestedMonitorLayout = monitors;
+    }
+    Q_EMIT requestedMonitorLayoutChanged(monitors);
+}
+
+void DisplayControl::requestInitialMonitorLayout()
+{
+    const auto settings = m_connection->rdpPeer()->context->settings;
+    const auto monitorCount = freerdp_settings_get_uint32(settings, FreeRDP_MonitorCount);
+    const auto monitorArray = static_cast<const rdpMonitor *>(freerdp_settings_get_pointer(settings, FreeRDP_MonitorDefArray));
+
+    std::vector<DISPLAY_CONTROL_MONITOR_LAYOUT> wireMonitors;
+    if (monitorCount > 0 && monitorArray) {
+        wireMonitors.reserve(monitorCount);
+        for (uint32_t index = 0; index < monitorCount; ++index) {
+            const auto &monitor = monitorArray[index];
+            wireMonitors.push_back({
+                .Flags = monitor.is_primary ? DISPLAY_CONTROL_MONITOR_PRIMARY : 0U,
+                .Left = monitor.x,
+                .Top = monitor.y,
+                .Width = uint32_t(monitor.width),
+                .Height = uint32_t(monitor.height),
+                .PhysicalWidth = monitor.attributes.physicalWidth,
+                .PhysicalHeight = monitor.attributes.physicalHeight,
+                .Orientation = monitor.attributes.orientation,
+                .DesktopScaleFactor = monitor.attributes.desktopScaleFactor,
+                .DeviceScaleFactor = monitor.attributes.deviceScaleFactor,
+            });
+        }
+    } else {
+        wireMonitors.push_back({
+            .Flags = DISPLAY_CONTROL_MONITOR_PRIMARY,
+            .Left = 0,
+            .Top = 0,
+            .Width = freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth),
+            .Height = freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight),
+            .PhysicalWidth = 0,
+            .PhysicalHeight = 0,
+            .Orientation = 0,
+            .DesktopScaleFactor = 100,
+            .DeviceScaleFactor = 100,
+        });
+    }
+
+    DISPLAY_CONTROL_MONITOR_LAYOUT_PDU pdu{
+        .MonitorLayoutSize = DISPLAY_CONTROL_MONITOR_LAYOUT_SIZE,
+        .NumMonitors = uint32_t(wireMonitors.size()),
+        .Monitors = wireMonitors.data(),
+    };
+    DisplayMonitorList monitors;
+    QString error;
+    if (decodeMonitorLayout(pdu, &monitors, &error)) {
+        requestMonitorLayout(monitors);
+    } else {
+        qCWarning(KRDP) << "Ignoring invalid initial client monitor layout:" << error;
+    }
 }
 
 bool DisplayControl::decodeMonitorLayout(const DISPLAY_CONTROL_MONITOR_LAYOUT_PDU &pdu,

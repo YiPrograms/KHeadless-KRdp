@@ -247,6 +247,11 @@ DisplayControl *RdpConnection::displayControl() const
     return d->displayControl.get();
 }
 
+void RdpConnection::setMonitorLayout(const DisplayMonitorList &monitors)
+{
+    d->videoStream->setMonitorLayout(monitors);
+}
+
 NetworkDetection *RdpConnection::networkDetection() const
 {
     return d->networkDetection.get();

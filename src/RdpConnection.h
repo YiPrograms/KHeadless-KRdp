@@ -11,6 +11,7 @@
 
 #include <freerdp/freerdp.h>
 
+#include "DisplayControl.h"
 #include "krdp_export.h"
 
 namespace KRdp
@@ -22,7 +23,6 @@ class VideoStream;
 class Cursor;
 class NetworkDetection;
 class Clipboard;
-class DisplayControl;
 
 /**
  * An RDP session.
@@ -99,6 +99,11 @@ public:
     Clipboard *clipboard() const;
 
     DisplayControl *displayControl() const;
+
+    /**
+     * Publish a compositor-confirmed monitor layout to this RDP client.
+     */
+    void setMonitorLayout(const DisplayMonitorList &monitors);
 
     NetworkDetection *networkDetection() const;
 

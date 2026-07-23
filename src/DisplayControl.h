@@ -11,6 +11,9 @@
 #include <QSize>
 #include <QString>
 
+#include <mutex>
+#include <optional>
+
 #include <freerdp/server/disp.h>
 
 #include "krdp_export.h"
@@ -59,6 +62,16 @@ public:
     void close();
 
     /**
+     * Accept the most recently requested client layout.
+     *
+     * Embedders call this only after the compositor has applied the requested
+     * outputs. It triggers the matching RDPGFX reset.
+     */
+    bool acceptRequestedMonitorLayout(const DisplayMonitorList &monitors, QString *error = nullptr);
+    void rejectRequestedMonitorLayout();
+    std::optional<DisplayMonitorList> requestedMonitorLayout() const;
+
+    /**
      * Convert and validate a wire monitor layout.
      *
      * This method is public so embedders and tests can apply exactly the same
@@ -72,8 +85,14 @@ Q_SIGNALS:
     void requestedMonitorLayoutChanged(const KRdp::DisplayMonitorList &monitors);
 
 private:
+    static UINT receiveMonitorLayout(DispServerContext *context, const DISPLAY_CONTROL_MONITOR_LAYOUT_PDU *pdu);
+    void requestMonitorLayout(const DisplayMonitorList &monitors);
+    void requestInitialMonitorLayout();
+
     RdpConnection *m_connection = nullptr;
     DispServerContext *m_context = nullptr;
+    mutable std::mutex m_requestedMonitorLayoutMutex;
+    std::optional<DisplayMonitorList> m_requestedMonitorLayout;
 };
 
 }
