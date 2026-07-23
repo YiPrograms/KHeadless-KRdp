@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 
 add_library(KRdp)
+add_library(KRdp::KRdp ALIAS KRdp)
 
 if (BUILD_PLASMA_SESSION)
     if (Qt6_VERSION VERSION_GREATER_EQUAL "6.8.0")
@@ -59,7 +60,15 @@ qt6_add_dbus_interface(_dbus_sources xdp_dbus_remotedesktop_interface.xml xdp_db
 qt6_add_dbus_interface(_dbus_sources xdp_dbus_screencast_interface.xml xdp_dbus_screencast_interface)
 target_sources(KRdp PRIVATE ${_dbus_sources})
 
-target_include_directories(KRdp PUBLIC ${FreeRDP_INCLUDE_DIR} ${WinPR_INCLUDE_DIR} ${FreeRDP_Server_INCLUDE_DIR})
+target_include_directories(KRdp
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
+        $<INSTALL_INTERFACE:${KDE_INSTALL_INCLUDEDIR}/KRdp>
+        ${FreeRDP_INCLUDE_DIR}
+        ${WinPR_INCLUDE_DIR}
+        ${FreeRDP_Server_INCLUDE_DIR}
+)
 
 target_link_libraries(KRdp PUBLIC
     Qt::Core
@@ -83,7 +92,35 @@ set_target_properties(KRdp PROPERTIES
     SOVERSION ${PROJECT_VERSION_MAJOR}
 )
 
-install(TARGETS KRdp DESTINATION ${KDE_INSTALL_LIBDIR})
+install(TARGETS KRdp
+    EXPORT KRdpTargets
+    LIBRARY DESTINATION ${KDE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${KDE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${KDE_INSTALL_BINDIR}
+    INCLUDES DESTINATION ${KDE_INSTALL_INCLUDEDIR}/KRdp
+)
+
+install(EXPORT KRdpTargets
+    FILE KRdpTargets.cmake
+    NAMESPACE KRdp::
+    DESTINATION ${KDE_INSTALL_CMAKEPACKAGEDIR}/KRdp
+)
+
+install(FILES
+    AbstractSession.h
+    Clipboard.h
+    Cursor.h
+    DisplayControl.h
+    InputHandler.h
+    NetworkDetection.h
+    PlasmaScreencastV1Session.h
+    PortalSession.h
+    RdpConnection.h
+    Server.h
+    VideoStream.h
+    ${CMAKE_CURRENT_BINARY_DIR}/krdp_export.h
+    DESTINATION ${KDE_INSTALL_INCLUDEDIR}/KRdp
+)
 
 ecm_qt_install_logging_categories(EXPORT KRdp DESTINATION ${KDE_INSTALL_LOGGINGCATEGORIESDIR})
 
