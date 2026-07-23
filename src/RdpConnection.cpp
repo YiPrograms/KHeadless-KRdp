@@ -28,6 +28,7 @@
 
 #include "Clipboard.h"
 #include "Cursor.h"
+#include "DisplayControl.h"
 #include "InputHandler.h"
 #include "NetworkDetection.h"
 #include "PeerContext_p.h"
@@ -145,6 +146,7 @@ public:
     std::unique_ptr<Cursor> cursor;
     std::unique_ptr<NetworkDetection> networkDetection;
     std::unique_ptr<Clipboard> clipboard;
+    std::unique_ptr<DisplayControl> displayControl;
 
     freerdp_peer *peer = nullptr;
 
@@ -171,6 +173,7 @@ RdpConnection::RdpConnection(Server *server, qintptr socketHandle)
     d->cursor = std::make_unique<Cursor>(this);
     d->networkDetection = std::make_unique<NetworkDetection>(this);
     d->clipboard = std::make_unique<Clipboard>(this);
+    d->displayControl = std::make_unique<DisplayControl>(this);
 
     QMetaObject::invokeMethod(this, &RdpConnection::initialize, Qt::QueuedConnection);
 }
@@ -237,6 +240,11 @@ Cursor *RdpConnection::cursor() const
 Clipboard *RdpConnection::clipboard() const
 {
     return d->clipboard.get();
+}
+
+DisplayControl *RdpConnection::displayControl() const
+{
+    return d->displayControl.get();
 }
 
 NetworkDetection *RdpConnection::networkDetection() const
@@ -333,6 +341,8 @@ void RdpConnection::initialize()
     freerdp_settings_set_bool(settings, FreeRDP_NSCodec, false);
     freerdp_settings_set_bool(settings, FreeRDP_FrameMarkerCommandEnabled, true);
     freerdp_settings_set_bool(settings, FreeRDP_SurfaceFrameMarkerEnabled, true);
+    freerdp_settings_set_bool(settings, FreeRDP_SupportMonitorLayoutPdu, true);
+    freerdp_settings_set_bool(settings, FreeRDP_SupportDisplayControl, true);
 
     d->peer->Capabilities = peerCapabilities;
     d->peer->Activate = peerActivate;
@@ -386,6 +396,9 @@ void RdpConnection::run(std::stop_token stopToken)
             auto state = WTSVirtualChannelManagerGetDrdynvcState(context->virtualChannelManager);
             // Dynamic channels can only be set up properly once the dynamic channel channel is properly setup.
             if (state == DRDYNVC_STATE_READY) {
+                if (!d->displayControl->initialize()) {
+                    break;
+                }
                 if (d->videoStream->initialize()) {
                     d->videoStream->setEnabled(true);
                     setState(State::Streaming);
@@ -462,6 +475,7 @@ bool RdpConnection::onPostConnect()
 
 bool RdpConnection::onClose()
 {
+    d->displayControl->close();
     d->clipboard->close();
     d->videoStream->close();
     setState(State::Closed);
