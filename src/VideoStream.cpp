@@ -116,7 +116,7 @@ public:
     uint32_t channelId = 0;
 
     uint16_t nextSurfaceId = 1;
-    Surface surface;
+    QList<Surface> surfaces;
 
     std::atomic_bool pendingReset = true;
     bool enabled = false;
@@ -375,13 +375,13 @@ uint32_t VideoStream::onFrameAcknowledge(const RDPGFX_FRAME_ACKNOWLEDGE_PDU *fra
     return CHANNEL_RC_OK;
 }
 
-bool VideoStream::performReset(QSize size)
+bool VideoStream::performReset(const VideoFrame &frame)
 {
     auto layout = monitorLayout();
     if (layout.isEmpty()) {
         layout.append({
             .position = QPoint(0, 0),
-            .size = size,
+            .size = frame.size,
             .primary = true,
         });
     }
@@ -390,18 +390,22 @@ bool VideoStream::performReset(QSize size)
     for (const auto &monitor : std::as_const(layout)) {
         desktopGeometry = desktopGeometry.united(QRect(monitor.position, monitor.size));
     }
-    if (desktopGeometry.size() != size) {
+    const bool perOutput = frame.outputIndex >= 0;
+    if (perOutput && (frame.outputIndex >= layout.size() || layout.at(frame.outputIndex).size != frame.size)) {
+        return false;
+    }
+    if (!perOutput && desktopGeometry.size() != frame.size) {
         // Display Control is applied to KWin asynchronously. Keep the reset
         // pending until PipeWire starts producing frames for the new layout.
         return false;
     }
 
-    if (d->surface.id != 0) {
+    for (const auto &surface : std::as_const(d->surfaces)) {
         RDPGFX_DELETE_SURFACE_PDU deleteSurfacePdu{};
-        deleteSurfacePdu.surfaceId = d->surface.id;
+        deleteSurfacePdu.surfaceId = surface.id;
         d->gfxContext->DeleteSurface(d->gfxContext.get(), &deleteSurfacePdu);
-        d->surface = {};
     }
+    d->surfaces.clear();
 
     std::vector<MONITOR_DEF> monitorDefinitions;
     monitorDefinitions.reserve(layout.size());
@@ -416,8 +420,8 @@ bool VideoStream::performReset(QSize size)
     }
 
     RDPGFX_RESET_GRAPHICS_PDU resetGraphicsPdu{};
-    resetGraphicsPdu.width = size.width();
-    resetGraphicsPdu.height = size.height();
+    resetGraphicsPdu.width = desktopGeometry.width();
+    resetGraphicsPdu.height = desktopGeometry.height();
     resetGraphicsPdu.monitorCount = monitorDefinitions.size();
     resetGraphicsPdu.monitorDefArray = monitorDefinitions.data();
     auto status = d->gfxContext->ResetGraphics(d->gfxContext.get(), &resetGraphicsPdu);
@@ -426,31 +430,38 @@ bool VideoStream::performReset(QSize size)
         return false;
     }
 
-    RDPGFX_CREATE_SURFACE_PDU createSurfacePdu{};
-    createSurfacePdu.width = size.width();
-    createSurfacePdu.height = size.height();
-    uint16_t surfaceId = d->nextSurfaceId++;
-    createSurfacePdu.surfaceId = surfaceId;
-    createSurfacePdu.pixelFormat = GFX_PIXEL_FORMAT_XRGB_8888;
-    status = d->gfxContext->CreateSurface(d->gfxContext.get(), &createSurfacePdu);
-    if (status != CHANNEL_RC_OK) {
-        qCWarning(KRDP) << "CreateSurface failed" << status;
-        return false;
-    }
+    const int surfaceCount = perOutput ? layout.size() : 1;
+    for (int index = 0; index < surfaceCount; ++index) {
+        const QSize surfaceSize = perOutput ? layout.at(index).size : desktopGeometry.size();
+        RDPGFX_CREATE_SURFACE_PDU createSurfacePdu{};
+        createSurfacePdu.width = surfaceSize.width();
+        createSurfacePdu.height = surfaceSize.height();
+        const uint16_t surfaceId = d->nextSurfaceId++;
+        createSurfacePdu.surfaceId = surfaceId;
+        createSurfacePdu.pixelFormat = GFX_PIXEL_FORMAT_XRGB_8888;
+        status = d->gfxContext->CreateSurface(d->gfxContext.get(), &createSurfacePdu);
+        if (status != CHANNEL_RC_OK) {
+            qCWarning(KRDP) << "CreateSurface failed" << status;
+            return false;
+        }
 
-    d->surface = Surface{
-        .id = surfaceId,
-        .size = size,
-    };
+        d->surfaces.append({
+            .id = surfaceId,
+            .size = surfaceSize,
+        });
 
-    RDPGFX_MAP_SURFACE_TO_OUTPUT_PDU mapSurfaceToOutputPdu{};
-    mapSurfaceToOutputPdu.outputOriginX = 0;
-    mapSurfaceToOutputPdu.outputOriginY = 0;
-    mapSurfaceToOutputPdu.surfaceId = surfaceId;
-    status = d->gfxContext->MapSurfaceToOutput(d->gfxContext.get(), &mapSurfaceToOutputPdu);
-    if (status != CHANNEL_RC_OK) {
-        qCWarning(KRDP) << "MapSurfaceToOutput failed" << status;
-        return false;
+        const QPoint outputPosition = perOutput
+            ? layout.at(index).position - desktopGeometry.topLeft()
+            : QPoint();
+        RDPGFX_MAP_SURFACE_TO_OUTPUT_PDU mapSurfaceToOutputPdu{};
+        mapSurfaceToOutputPdu.outputOriginX = outputPosition.x();
+        mapSurfaceToOutputPdu.outputOriginY = outputPosition.y();
+        mapSurfaceToOutputPdu.surfaceId = surfaceId;
+        status = d->gfxContext->MapSurfaceToOutput(d->gfxContext.get(), &mapSurfaceToOutputPdu);
+        if (status != CHANNEL_RC_OK) {
+            qCWarning(KRDP) << "MapSurfaceToOutput failed" << status;
+            return false;
+        }
     }
 
     return true;
@@ -467,10 +478,14 @@ void VideoStream::sendFrame(const VideoFrame &frame)
     }
 
     if (d->pendingReset.load()) {
-        if (!performReset(frame.size)) {
+        if (!performReset(frame)) {
             return;
         }
         d->pendingReset.store(false);
+    }
+    const int surfaceIndex = frame.outputIndex >= 0 ? frame.outputIndex : 0;
+    if (surfaceIndex >= d->surfaces.size() || d->surfaces.at(surfaceIndex).size != frame.size) {
+        return;
     }
 
     d->session->networkDetection()->startBandwidthMeasure();
@@ -491,7 +506,7 @@ void VideoStream::sendFrame(const VideoFrame &frame)
     endFramePdu.frameId = frameId;
 
     RDPGFX_SURFACE_COMMAND surfaceCommand;
-    surfaceCommand.surfaceId = d->surface.id;
+    surfaceCommand.surfaceId = d->surfaces.at(surfaceIndex).id;
     surfaceCommand.codecId = RDPGFX_CODECID_AVC420;
     surfaceCommand.format = PIXEL_FORMAT_BGRX32;
 

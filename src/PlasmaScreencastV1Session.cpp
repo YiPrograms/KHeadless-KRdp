@@ -174,8 +174,13 @@ void PlasmaScreencastV1Session::start()
 {
     if (auto vm = virtualMonitor()) {
         d->request = d->m_screencasting.createVirtualMonitorStream(vm->name, vm->size, vm->dpr, Screencasting::Metadata);
-    } else if (!activeStream()) {
+    } else {
         d->request = d->m_screencasting.createWorkspaceStream(Screencasting::Metadata);
+    }
+    if (!d->request) {
+        qCWarning(KRDP) << "KWin did not provide a screencast stream";
+        Q_EMIT error();
+        return;
     }
     connect(d->request, &ScreencastingStream::failed, this, &PlasmaScreencastV1Session::error);
     connect(d->request, &ScreencastingStream::created, this, [this](uint nodeId) {
@@ -196,7 +201,7 @@ void PlasmaScreencastV1Session::start()
 void PlasmaScreencastV1Session::sendEvent(const std::shared_ptr<QEvent> &event)
 {
     auto encodedStream = stream();
-    if (!encodedStream || !encodedStream->isActive()) {
+    if (!encodedStream || size().isEmpty() || logicalSize().isEmpty()) {
         return;
     }
 

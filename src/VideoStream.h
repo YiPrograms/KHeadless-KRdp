@@ -32,6 +32,11 @@ struct VideoFrame {
      */
     QSize size;
     /**
+     * Monitor index for a per-output stream. A negative value denotes a
+     * legacy frame containing the complete workspace.
+     */
+    int outputIndex = -1;
+    /**
      * h264 compressed data in YUV420 color space.
      */
     QByteArray data;
@@ -123,7 +128,7 @@ private:
     uint32_t onCapsAdvertise(const RDPGFX_CAPS_ADVERTISE_PDU *capsAdvertise);
     uint32_t onFrameAcknowledge(const RDPGFX_FRAME_ACKNOWLEDGE_PDU *frameAcknowledge);
 
-    bool performReset(QSize size);
+    bool performReset(const VideoFrame &frame);
     void sendFrame(const VideoFrame &frame);
 
     void updateRequestedFrameRate();
