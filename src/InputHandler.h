@@ -37,6 +37,15 @@ public:
     void initialize(rdpInput *input);
 
     /**
+     * Allow or reject input received from this connection.
+     *
+     * Connections start disabled. An embedding application must explicitly
+     * elect a controller before keyboard or pointer events are delivered.
+     */
+    void setEnabled(bool enabled);
+    bool enabled() const;
+
+    /**
      * Emitted whenever a new input event was received from the client.
      *
      * \param event The input event that was received.

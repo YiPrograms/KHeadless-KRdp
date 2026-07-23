@@ -66,14 +66,19 @@ bool Clipboard::initialize()
         return false;
     };
 
-    m_enabled = true;
+    m_initialized = true;
 
     return true;
 }
 
-bool Clipboard::enabled()
+void Clipboard::setEnabled(bool enabled)
 {
-    return m_enabled;
+    m_enabled = enabled;
+}
+
+bool Clipboard::enabled() const
+{
+    return m_initialized && m_enabled;
 }
 
 void Clipboard::close()
@@ -86,6 +91,7 @@ void Clipboard::close()
         qCWarning(KRDP) << "Could not stop Clipboard context";
         return;
     };
+    m_initialized = false;
     m_enabled = false;
 }
 }

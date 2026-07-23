@@ -32,12 +32,14 @@ public:
     bool initialize();
     void close();
 
-    bool enabled();
+    void setEnabled(bool enabled);
+    bool enabled() const;
 
 private:
     class Private;
     const std::unique_ptr<Private> d;
 
-    bool m_enabled;
+    bool m_initialized = false;
+    bool m_enabled = false;
 };
 }

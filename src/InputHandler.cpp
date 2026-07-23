@@ -4,6 +4,8 @@
 
 #include "InputHandler.h"
 
+#include <atomic>
+
 #include <QKeyEvent>
 
 #include <xkbcommon/xkbcommon.h>
@@ -75,6 +77,7 @@ class KRDP_NO_EXPORT InputHandler::Private
 public:
     RdpConnection *session;
     rdpInput *input;
+    std::atomic_bool enabled = false;
 };
 
 InputHandler::InputHandler(KRdp::RdpConnection *session)
@@ -98,14 +101,30 @@ void InputHandler::initialize(rdpInput *input)
     input->UnicodeKeyboardEvent = inputUnicodeKeyboardEvent;
 }
 
+void InputHandler::setEnabled(bool enabled)
+{
+    d->enabled.store(enabled);
+}
+
+bool InputHandler::enabled() const
+{
+    return d->enabled.load();
+}
+
 bool InputHandler::synchronizeEvent(uint32_t /*flags*/)
 {
+    if (!d->enabled.load()) {
+        return true;
+    }
     // TODO: This syncs caps/num/scroll lock keys, do we actually want to?
     return true;
 }
 
 bool InputHandler::mouseEvent(uint16_t x, uint16_t y, uint16_t flags)
 {
+    if (!d->enabled.load()) {
+        return true;
+    }
     QPointF position = QPointF(x, y);
 
     Qt::MouseButton button = Qt::NoButton;
@@ -144,6 +163,9 @@ bool InputHandler::mouseEvent(uint16_t x, uint16_t y, uint16_t flags)
 
 bool InputHandler::extendedMouseEvent(uint16_t x, uint16_t y, uint16_t flags)
 {
+    if (!d->enabled.load()) {
+        return true;
+    }
     if (flags & PTR_FLAGS_MOVE) {
         return mouseEvent(x, y, PTR_FLAGS_MOVE);
     }
@@ -171,6 +193,9 @@ bool InputHandler::extendedMouseEvent(uint16_t x, uint16_t y, uint16_t flags)
 
 bool InputHandler::keyboardEvent(uint16_t code, uint16_t flags)
 {
+    if (!d->enabled.load()) {
+        return true;
+    }
     auto virtualCode = GetVirtualKeyCodeFromVirtualScanCode(flags & KBD_FLAGS_EXTENDED ? code | KBDEXT : code, 4);
     virtualCode = flags & KBD_FLAGS_EXTENDED ? virtualCode | KBDEXT : virtualCode;
 
@@ -186,6 +211,9 @@ bool InputHandler::keyboardEvent(uint16_t code, uint16_t flags)
 
 bool InputHandler::unicodeKeyboardEvent(uint16_t code, uint16_t flags)
 {
+    if (!d->enabled.load()) {
+        return true;
+    }
     auto text = QString(QChar::fromUcs2(code));
     auto keysym = xkb_utf32_to_keysym(text.toUcs4().first());
     if (!keysym) {
