@@ -12,6 +12,7 @@
 #include <QDBusPendingCallWatcher>
 #include <QPoint>
 #include <QPointer>
+#include <QString>
 
 #include "AbstractSession.h"
 #include "krdp_export.h"
@@ -34,6 +35,7 @@ public:
     ~PlasmaScreencastV1Session() override;
 
     void start() override;
+    QString lastError() const;
 
     void sendEvent(const std::shared_ptr<QEvent> &event) override;
 

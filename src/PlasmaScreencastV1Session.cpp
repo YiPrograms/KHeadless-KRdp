@@ -156,6 +156,7 @@ public:
     Screencasting m_screencasting;
     ScreencastingStream *request = nullptr;
     FakeInput *remoteInterface = nullptr;
+    QString lastError;
 };
 
 PlasmaScreencastV1Session::PlasmaScreencastV1Session(Server *server)
@@ -172,17 +173,23 @@ PlasmaScreencastV1Session::~PlasmaScreencastV1Session()
 
 void PlasmaScreencastV1Session::start()
 {
+    d->lastError.clear();
     if (auto vm = virtualMonitor()) {
         d->request = d->m_screencasting.createVirtualMonitorStream(vm->name, vm->size, vm->dpr, Screencasting::Metadata);
     } else {
         d->request = d->m_screencasting.createWorkspaceStream(Screencasting::Metadata);
     }
     if (!d->request) {
-        qCWarning(KRDP) << "KWin did not provide a screencast stream";
+        d->lastError = QStringLiteral("KWin did not provide the requested screencast protocol");
+        qCWarning(KRDP) << d->lastError;
         Q_EMIT error();
         return;
     }
-    connect(d->request, &ScreencastingStream::failed, this, &PlasmaScreencastV1Session::error);
+    connect(d->request, &ScreencastingStream::failed, this, [this](const QString &reason) {
+        d->lastError = reason;
+        qCWarning(KRDP) << "KWin rejected the screencast request:" << reason;
+        Q_EMIT error();
+    });
     connect(d->request, &ScreencastingStream::created, this, [this](uint nodeId) {
         qCDebug(KRDP) << "Started Plasma session";
 
@@ -196,6 +203,11 @@ void PlasmaScreencastV1Session::start()
         connect(encodedStream, &PipeWireEncodedStream::cursorChanged, this, &PlasmaScreencastV1Session::cursorUpdate);
         setStarted(true);
     });
+}
+
+QString PlasmaScreencastV1Session::lastError() const
+{
+    return d->lastError;
 }
 
 void PlasmaScreencastV1Session::sendEvent(const std::shared_ptr<QEvent> &event)
