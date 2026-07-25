@@ -5,9 +5,9 @@
 #include "Clipboard.h"
 
 #include <QMetaObject>
-#include <QStringConverter>
 #include <QThread>
 
+#include "ClipboardTextCodec_p.h"
 #include "PeerContext_p.h"
 #include "RdpConnection.h"
 #include <freerdp/freerdp.h>
@@ -262,15 +262,7 @@ uint32_t Clipboard::Private::onClientFormatDataRequest(const CLIPRDR_FORMAT_DATA
             },
         .requestedFormatData = nullptr,
     };
-    QByteArray encoded;
-    if (enabled && hasServerText && request->requestedFormatId == CF_UNICODETEXT) {
-        QStringEncoder encoder(QStringConverter::Utf16LE);
-        encoded = encoder(serverText);
-        encoded.append(2, '\0');
-    } else if (enabled && hasServerText && (request->requestedFormatId == CF_TEXT || request->requestedFormatId == CF_OEMTEXT)) {
-        encoded = serverText.toLocal8Bit();
-        encoded.append('\0');
-    }
+    const auto encoded = enabled && hasServerText ? encodeClipboardText(serverText, request->requestedFormatId) : QByteArray();
     if (!encoded.isEmpty()) {
         response.common.msgFlags = CB_RESPONSE_OK;
         response.common.dataLen = encoded.size();
@@ -282,23 +274,16 @@ uint32_t Clipboard::Private::onClientFormatDataRequest(const CLIPRDR_FORMAT_DATA
 
 uint32_t Clipboard::Private::onClientFormatDataResponse(const CLIPRDR_FORMAT_DATA_RESPONSE *response)
 {
-    constexpr uint32_t maximumTextBytes = 16 * 1024 * 1024;
-    if (!enabled || !(response->common.msgFlags & CB_RESPONSE_OK) || !response->requestedFormatData || response->common.dataLen > maximumTextBytes) {
+    if (!enabled || !(response->common.msgFlags & CB_RESPONSE_OK)) {
         return CHANNEL_RC_OK;
     }
 
-    QString text;
-    if (requestedClientFormat == CF_UNICODETEXT) {
-        QStringDecoder decoder(QStringConverter::Utf16LE);
-        text = decoder(QByteArrayView(reinterpret_cast<const char *>(response->requestedFormatData), response->common.dataLen));
-    } else {
-        text = QString::fromLocal8Bit(reinterpret_cast<const char *>(response->requestedFormatData), response->common.dataLen);
-    }
-    while (text.endsWith(QChar::Null)) {
-        text.chop(1);
+    const auto text = decodeClipboardText(response->requestedFormatData, response->common.dataLen, requestedClientFormat);
+    if (!text) {
+        return CHANNEL_RC_OK;
     }
     requestedClientFormat = 0;
-    Q_EMIT q->clientTextChanged(text);
+    Q_EMIT q->clientTextChanged(*text);
     return CHANNEL_RC_OK;
 }
 }
