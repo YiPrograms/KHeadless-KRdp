@@ -138,6 +138,10 @@ ScreencastingStream *Screencasting::createWorkspaceStream(Screencasting::CursorM
 
 ScreencastingStream *Screencasting::createRegionStream(QRect g, qreal scale, Screencasting::CursorMode mode)
 {
+    if (!d->isActive()) {
+        return nullptr;
+    }
+
     auto stream = new ScreencastingStream(this);
     stream->d->init(d->stream_region(g.x(), g.y(), g.width(), g.height(), wl_fixed_from_double(scale), mode));
     stream->d->m_size = g.size();
@@ -146,6 +150,10 @@ ScreencastingStream *Screencasting::createRegionStream(QRect g, qreal scale, Scr
 
 ScreencastingStream *Screencasting::createVirtualMonitorStream(const QString &name, const QSize &resolution, qreal dpr, Screencasting::CursorMode mode)
 {
+    if (!d->isActive()) {
+        return nullptr;
+    }
+
     auto stream = new ScreencastingStream(this);
     stream->d->init(d->stream_virtual_output(name, resolution.width(), resolution.height(), wl_fixed_from_double(dpr), mode));
     return stream;

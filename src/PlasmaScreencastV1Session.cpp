@@ -201,7 +201,7 @@ void PlasmaScreencastV1Session::start()
 void PlasmaScreencastV1Session::sendEvent(const std::shared_ptr<QEvent> &event)
 {
     auto encodedStream = stream();
-    if (!encodedStream || size().isEmpty() || logicalSize().isEmpty()) {
+    if (!encodedStream || !d->remoteInterface->isActive() || size().isEmpty() || logicalSize().isEmpty()) {
         return;
     }
 
