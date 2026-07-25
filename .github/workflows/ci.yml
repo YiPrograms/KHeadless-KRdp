@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - Plasma/6.3
+      - kheadless/multimonitor-v1
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git cmake ninja extra-cmake-modules \
+            qt6-base qt6-declarative qt6-wayland \
+            kconfig kdbusaddons kcmutils ki18n kcoreaddons \
+            kstatusnotifieritem kcrash \
+            kpipewire plasma-wayland-protocols \
+            freerdp libxkbcommon qtkeychain-qt6
+
+      - uses: actions/checkout@v6
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DBUILD_EXAMPLES=OFF \
+            -DBUILD_PLASMA_SESSION=ON \
+            -DBUILD_TESTING=ON
+
+      - name: Build
+        run: cmake --build build --parallel 2
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Verify install
+        run: |
+          DESTDIR="$RUNNER_TEMP/install" cmake --install build
+          test -e "$RUNNER_TEMP/install/usr/lib/libKRdp.so"
+          test -e "$RUNNER_TEMP/install/usr/include/KRdp/DisplayControl.h"

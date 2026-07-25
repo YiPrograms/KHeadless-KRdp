@@ -45,6 +45,32 @@ class DisplayControlTest : public QObject
     Q_OBJECT
 
 private Q_SLOTS:
+    void acceptsSupportedMonitorCounts_data()
+    {
+        QTest::addColumn<int>("count");
+        for (int count = 1; count <= int(DisplayControl::MaximumMonitorCount); ++count) {
+            QTest::newRow(qPrintable(QStringLiteral("%1-monitor").arg(count))) << count;
+        }
+    }
+
+    void acceptsSupportedMonitorCounts()
+    {
+        QFETCH(int, count);
+        std::vector<DISPLAY_CONTROL_MONITOR_LAYOUT> monitors;
+        monitors.reserve(count);
+        for (int index = 0; index < count; ++index) {
+            monitors.push_back(monitor(index * 1920, 0, 1920, 1080, index == 0));
+        }
+        const auto layoutPdu = pdu(monitors);
+
+        DisplayMonitorList decoded;
+        QString error;
+        QVERIFY2(DisplayControl::decodeMonitorLayout(layoutPdu, &decoded, &error), qPrintable(error));
+        QCOMPARE(decoded.size(), count);
+        QCOMPARE(decoded.constFirst().position, QPoint(0, 0));
+        QCOMPARE(decoded.constLast().position, QPoint((count - 1) * 1920, 0));
+    }
+
     void acceptsMultipleMonitors()
     {
         std::vector monitors{
@@ -114,6 +140,50 @@ private Q_SLOTS:
         QCOMPARE(decoded.constFirst().desktopScaleFactor, 100U);
         QCOMPARE(decoded.constFirst().deviceScaleFactor, 100U);
         QVERIFY(decoded.constFirst().physicalSize.isEmpty());
+    }
+
+    void preservesValidOptionalAttributes()
+    {
+        auto configured = monitor(0, 0, 2560, 1440, true);
+        configured.Orientation = 270;
+        configured.DesktopScaleFactor = 175;
+        configured.DeviceScaleFactor = 140;
+        configured.PhysicalWidth = 600;
+        configured.PhysicalHeight = 340;
+        std::vector monitors{configured};
+        const auto layoutPdu = pdu(monitors);
+
+        DisplayMonitorList decoded;
+        QString error;
+        QVERIFY2(DisplayControl::decodeMonitorLayout(layoutPdu, &decoded, &error), qPrintable(error));
+        QCOMPARE(decoded.constFirst().orientation, 270U);
+        QCOMPARE(decoded.constFirst().desktopScaleFactor, 175U);
+        QCOMPARE(decoded.constFirst().deviceScaleFactor, 140U);
+        QCOMPARE(decoded.constFirst().physicalSize, QSize(600, 340));
+    }
+
+    void rejectsTooManyMonitors()
+    {
+        std::vector<DISPLAY_CONTROL_MONITOR_LAYOUT> monitors;
+        for (uint32_t index = 0; index <= DisplayControl::MaximumMonitorCount; ++index) {
+            monitors.push_back(monitor(int(index * 200), 0, 200, 200, index == 0));
+        }
+        const auto layoutPdu = pdu(monitors);
+
+        DisplayMonitorList decoded;
+        QVERIFY(!DisplayControl::decodeMonitorLayout(layoutPdu, &decoded));
+    }
+
+    void rejectsMultiplePrimaryMonitors()
+    {
+        std::vector monitors{
+            monitor(0, 0, 1920, 1080, true),
+            monitor(1920, 0, 1920, 1080, true),
+        };
+        const auto layoutPdu = pdu(monitors);
+
+        DisplayMonitorList decoded;
+        QVERIFY(!DisplayControl::decodeMonitorLayout(layoutPdu, &decoded));
     }
 
     void rejectsExcessiveDesktopExtent()
